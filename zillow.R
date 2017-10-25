@@ -56,7 +56,8 @@ useVar <- c("logerror","taxvaluedollarcnt"
             ,"regionidzip"
             ,"regionidcity"
             ,"regionidcounty"
-            ,"yearbuilt")
+            ,"yearbuilt"
+            ,"lotsizesquarefeet","latitude","longitude") #추가파생변수를 위해 추가
             
 #--------------------------------------------------------------------
 # 02. feature engineering -------------------------------------------
@@ -103,6 +104,53 @@ NaData$taxdelinquencyflag <- ifelse(NaData$taxdelinquencyflag == "Y", 1,0 )
 # train set 생성 (mice결과 적용)
 train <- cbind(completeMice, NaData)
 #train <- cbind(knnResult, noNaData)
+#--------------------------------------------------------------------
+# 02. ADD SOME FEATURES ---------------------------------------------
+#--------------------------------------------------------------------
+
+
+# Dist from centroid
+train$longmean <- mean((train$longitude), na.rm=TRUE)/1e6
+train$latmean <- mean((train$latitude), na.rm=TRUE)/1e6
+
+# Adjusted long lat
+train$longitude1 <- train$longitude/1e6
+train$latitude1 <- train$latitude/1e6
+# Haversine distance
+install.packages("geosphere")
+library(geosphere)
+
+train$geodist <- distHaversine(train[,10:11], train[,12:13])
+# 하버사인 : 구 위의 최단거리를 구하는 공식
+train <- train %>% 
+  select(-longmean,-latmean,-longitude1,-latitude1)
+
+# Tax based info : 땅 값대비 건물의 가치 (작을 수록 good)
+train$strValRatio <-train$structuretaxvaluedollarcnt / (train$landtaxvaluedollarcnt + train$structuretaxvaluedollarcnt)
+#'landtaxvaluedollarcnt'	구획의 토지면적에 대한 평가가치		
+#'structuretaxvaluedollarcnt'	구획(parcel)에 지어진 건물의 평가가치		
+
+# Bathrooms are important : bathroomcnt의 중요도를 높이기 위해 living area 넓이와 곱하여 상호작용을 만듬
+train$bathInteraction <-train$bathroomcnt * train$calculatedfinishedsquarefeet
+#'bathroomcnt'	Bathroom 개수		
+#'calculatedfinishedsquarefeet'	 Calculated total finished living area of the home 
+
+
+# Sq Ft / Room : 방 1개당 단위 면적
+train$sqftRoom <- train$calculatedfinishedsquarefeet / train$roomcnt
+#'calculatedfinishedsquarefeet'	 Calculated total finished living area of the home 
+#'roomcnt'	 Total number of rooms in the principal residence
+
+
+# Struc / Lanad : 집크기대비 마당면적, 값이 작을 수록 시골일 확률이 있고 값이 클수록 도심지 일 수 있음
+train$strucLand <- train$calculatedfinishedsquarefeet / train$lotsizesquarefeet
+#'calculatedfinishedsquarefeet'	 Calculated total finished living area of the home
+#'lotsizesquarefeet'	 Area of the lot in square feet (마당넓이)
+#calculatedfinishedsquarefeet 에서 포함되는 것 : 집 전체 전용면적
+
+# Age
+train$age <- 2017 - p$yearbuilt
+train<-train %>% select ("geodist","strValRatio","bathInteraction","sqftRoom","strucLand","age")
 
 
 #--------------------------------------------------------------------
@@ -125,9 +173,9 @@ plot(importance, cex.lab=0.5)
 model_rf$modelInfo$varImp
 
 
-### xgboost
+### xgboost 모델
 #trainMat<-model.matrix(~.,data = train)
-#params<-list(max.depth = 5, eta = 0.3, objective = "reg:linear", eval_metric = "error")
+#params<-list(max.depth = 5, eta = 0.3, objective = "reg:linear", eval_metric = "rmse")
 #model_xgb<-xgboost(trainMat, label = trainMat[,9], params = params, nrounds = 5)
 
 
@@ -216,54 +264,3 @@ write.csv(result, file = "submission_xgb_1016.csv", row.names = FALSE )
 
 
 
-
-
-###################################아직 적용안함
-######## ADD SOME FEATURES #######
-p<-propert %>% select(c("longitude","latitude","structuretaxvaluedollarcnt","landtaxvaluedollarcnt","bathroomcnt","calculatedfinishedsquarefeet"
-                        ,"roomcnt","lotsizesquarefeet","yearbuilt",))
-# Dist from centroid
-p$longmean <- mean((p$longitude), na.rm=TRUE)/1e6
-p$latmean <- mean((p$latitude), na.rm=TRUE)/1e6
-
-# Adjusted long lat
-p$longitude1 <- p$longitude/1e6
-p$latitude1 <- p$latitude/1e6
-
-# Haversine distance
-install.packages("geosphere")
-library(geosphere)
-ncol(p)
-p$geodist <- distHaversine(p[,10:11], p[,12:13])
-# 하버사인 : 구 위의 최단거리를 구하는 공식
-p[,longmean := NULL]
-p[,latmean := NULL]
-p[,longitude1 := NULL]
-p[,latitude1 := NULL]
-
-# Tax based info : 땅 값대비 건물의 가치 (작을 수록 good)
-p[, strValRatio := (p$structuretaxvaluedollarcnt / (p$landtaxvaluedollarcnt + p$structuretaxvaluedollarcnt))]
-#'landtaxvaluedollarcnt'	구획의 토지면적에 대한 평가가치		
-#'structuretaxvaluedollarcnt'	구획(parcel)에 지어진 건물의 평가가치		
-
-# Bathrooms are important : bathroomcnt의 중요도를 높이기 위해 living area 넓이와 곱하여 상호작용을 만듬
-p[, bathInteraction := (p$bathroomcnt * p$calculatedfinishedsquarefeet)]
-#'bathroomcnt'	Bathroom 개수		
-#'calculatedfinishedsquarefeet'	 Calculated total finished living area of the home 
-
-
-# Sq Ft / Room : 방 1개당 단위 면적
-p[, sqftRoom := (p$calculatedfinishedsquarefeet / p$roomcnt)]
-#'calculatedfinishedsquarefeet'	 Calculated total finished living area of the home 
-#'roomcnt'	 Total number of rooms in the principal residence
-
-
-# Struc / Lanad : 집크기대비 마당면적, 값이 작을 수록 시골일 확률이 있고 값이 클수록 도심지 일 수 있음
-p[, strucLand := (p$calculatedfinishedsquarefeet / p$lotsizesquarefeet)]
-#'calculatedfinishedsquarefeet'	 Calculated total finished living area of the home
-#'lotsizesquarefeet'	 Area of the lot in square feet (마당넓이)
-#calculatedfinishedsquarefeet 에서 포함되는 것 : 집 전체 전용면적
-
-# Age
-p[, age := 2017 - p$yearbuilt]
-p<-p %>% select ("geodist","strValRatio","bathInteraction","sqftRoom","strucLand","age")
