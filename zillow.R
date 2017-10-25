@@ -61,6 +61,7 @@ useVar <- c("logerror","taxvaluedollarcnt"
 #--------------------------------------------------------------------
 # 02. feature engineering -------------------------------------------
 #--------------------------------------------------------------------
+# 90275건
 total <- merge(x = train1, y = propert, by = "parcelid", all.x = TRUE)
 
 # 사용할 22개 변수 추출
@@ -76,16 +77,18 @@ MiceDataVar <- c("taxvaluedollarcnt"
               ,"calculatedfinishedsquarefeet")
 
 # split data
-MiceData <- total %>% select(MiceDataVar)
+#MiceData <- total %>% select(MiceDataVar)
 NaData <- total %>% select(-one_of(MiceDataVar))
 
 #NA Imputation
 # mice 결과
-miceResult <- mice(MiceData, m = 2)
-completeMice <- complete(miceResult, 1)
-miceResult <- mice(completeMice, m = 2)
-completeMice <- complete(miceResult, 1)
+#miceResult <- mice(MiceData, m = 2)
+#completeMice <- complete(miceResult, 1)
+#miceResult <- mice(completeMice, m = 2)
+#completeMice <- complete(miceResult, 1)
+#write.csv(completeMice, "c:/data/trainMice.csv",sep=",")
 
+completeMice<-read.csv("c:/data/trainMice.csv",sep=",")
 
 # knn 결과
 #install.packages("DMwR")
@@ -217,7 +220,8 @@ write.csv(result, file = "submission_xgb_1016.csv", row.names = FALSE )
 
 ###################################아직 적용안함
 ######## ADD SOME FEATURES #######
-
+p<-propert %>% select(c("longitude","latitude","structuretaxvaluedollarcnt","landtaxvaluedollarcnt","bathroomcnt","calculatedfinishedsquarefeet"
+                        ,"roomcnt","lotsizesquarefeet","yearbuilt",))
 # Dist from centroid
 p$longmean <- mean((p$longitude), na.rm=TRUE)/1e6
 p$latmean <- mean((p$latitude), na.rm=TRUE)/1e6
@@ -227,8 +231,10 @@ p$longitude1 <- p$longitude/1e6
 p$latitude1 <- p$latitude/1e6
 
 # Haversine distance
+install.packages("geosphere")
+library(geosphere)
 ncol(p)
-p$geodist <- distHaversine(p[,31:32], p[,33:34])
+p$geodist <- distHaversine(p[,10:11], p[,12:13])
 # 하버사인 : 구 위의 최단거리를 구하는 공식
 p[,longmean := NULL]
 p[,latmean := NULL]
@@ -236,27 +242,28 @@ p[,longitude1 := NULL]
 p[,latitude1 := NULL]
 
 # Tax based info : 땅 값대비 건물의 가치 (작을 수록 good)
-pr[, strValRatio := (pr$structuretaxvaluedollarcnt / (pr$landtaxvaluedollarcnt + pr$structuretaxvaluedollarcnt))]
+p[, strValRatio := (p$structuretaxvaluedollarcnt / (p$landtaxvaluedollarcnt + p$structuretaxvaluedollarcnt))]
 #'landtaxvaluedollarcnt'	구획의 토지면적에 대한 평가가치		
 #'structuretaxvaluedollarcnt'	구획(parcel)에 지어진 건물의 평가가치		
 
 # Bathrooms are important : bathroomcnt의 중요도를 높이기 위해 living area 넓이와 곱하여 상호작용을 만듬
-pr[, bathInteraction := (pr$bathroomcnt * pr$calculatedfinishedsquarefeet)]
+p[, bathInteraction := (p$bathroomcnt * p$calculatedfinishedsquarefeet)]
 #'bathroomcnt'	Bathroom 개수		
 #'calculatedfinishedsquarefeet'	 Calculated total finished living area of the home 
 
 
 # Sq Ft / Room : 방 1개당 단위 면적
-pr[, sqftRoom := (pr$calculatedfinishedsquarefeet / pr$roomcnt)]
+p[, sqftRoom := (p$calculatedfinishedsquarefeet / p$roomcnt)]
 #'calculatedfinishedsquarefeet'	 Calculated total finished living area of the home 
 #'roomcnt'	 Total number of rooms in the principal residence
 
 
 # Struc / Lanad : 집크기대비 마당면적, 값이 작을 수록 시골일 확률이 있고 값이 클수록 도심지 일 수 있음
-pr[, strucLand := (pr$calculatedfinishedsquarefeet / pr$lotsizesquarefeet)]
+p[, strucLand := (p$calculatedfinishedsquarefeet / p$lotsizesquarefeet)]
 #'calculatedfinishedsquarefeet'	 Calculated total finished living area of the home
 #'lotsizesquarefeet'	 Area of the lot in square feet (마당넓이)
 #calculatedfinishedsquarefeet 에서 포함되는 것 : 집 전체 전용면적
 
 # Age
-pr[, age := 2017 - pr$yearbuilt]
+p[, age := 2017 - p$yearbuilt]
+p<-p %>% select ("geodist","strValRatio","bathInteraction","sqftRoom","strucLand","age")
